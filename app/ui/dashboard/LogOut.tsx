@@ -1,5 +1,6 @@
-import { createClient } from "@/utils/supabase/server"
+import { createServerClient } from "@/utils/pocketbase/server"
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { ArrowRightStartOnRectangleIcon} from '@heroicons/react/24/outline';
 
 
@@ -7,8 +8,9 @@ export default function LogOut() {
   
   const logout = async () => {
     "use server"
-    const supabase = await createClient();
-    await supabase.auth.signOut();
+    // Clear the auth cookie
+    const cookieStore = cookies();
+    cookieStore.delete('pb_auth');
     redirect("/")
   }
 

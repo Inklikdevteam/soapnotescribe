@@ -4,18 +4,19 @@
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
-    "update-types": "npx supabase gen types typescript --project-id \"grjecfvldxcnvhmjpvmu\" --schema public > app/database.types.ts"
+    "pocketbase": "pocketbase serve",
+    "setup:pb": "powershell -ExecutionPolicy Bypass -File ./scripts/setup-pocketbase.ps1",
+    "import:schema": "node scripts/import-schema.js",
+    "create:collections": "node scripts/create-collections.js",
+    "fix:collections": "node scripts/fix-collections.js",
+    "fix:api-rules": "node scripts/fix-api-rules.js",
+    "quickstart": "powershell -ExecutionPolicy Bypass -File ./scripts/quick-start.ps1"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.3",
     "@heroicons/react": "^2.0.18",
     "@phosphor-icons/react": "^2.0.15",
     "@react-pdf/renderer": "^3.4.4",
-    "@supabase/auth-helpers-nextjs": "^0.8.7",
-    "@supabase/auth-ui-react": "^0.4.7",
-    "@supabase/auth-ui-shared": "^0.1.8",
-    "@supabase/ssr": "^0.1.0",
-    "@supabase/supabase-js": "^2.39.8",
     "@tailwindcss/forms": "^0.5.7",
     "@types/node": "20.5.7",
     "@uppy/audio": "^1.1.8",
@@ -48,6 +49,7 @@
     "openai": "^4.25.0",
     "pdfkit": "^0.15.0",
     "pdfmake": "^0.2.10",
+    "pocketbase": "^0.21.5",
     "postcss": "8.4.31",
     "react": "^18.3.1",
     "react-audio-voice-recorder": "^2.2.0",
@@ -78,8 +80,7 @@
     "eslint-config-prettier": "9.0.0",
     "node-loader": "^2.0.0",
     "prettier": "^3.0.3",
-    "prettier-plugin-tailwindcss": "0.5.4",
-    "supabase": "^1.145.4"
+    "prettier-plugin-tailwindcss": "0.5.4"
   },
   "engines": {
     "node": ">=18.17.0"

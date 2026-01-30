@@ -10,6 +10,35 @@ export default function SignUpPage() {
   const [password, setPassword] = useState<string>('');
   const [passwordConfirm, setPasswordConfirm] = useState<string>('');
   const submitOkay = password.length > 6 && password === passwordConfirm;
+  
+  // Check if signups are disabled
+  const signupsDisabled = process.env.NEXT_PUBLIC_DISABLE_SIGNUPS === 'true';
+
+  if (signupsDisabled) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-24">
+        <div className="w-[400px] rounded-md bg-white p-8 shadow-md">
+          <div className="mb-6 flex justify-center">
+            <Logo />
+          </div>
+          <div className="text-center">
+            <h2 className="mb-4 text-2xl font-semibold text-gray-700">
+              Signups Disabled
+            </h2>
+            <p className="mb-6 text-gray-600">
+              New user registration is currently disabled. Please contact your administrator.
+            </p>
+            <Link
+              href="/login"
+              className="inline-block rounded-full bg-teal-600 px-6 py-3 font-bold text-white transition-all hover:bg-teal-500"
+            >
+              Go to Login
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between bg-gray-50 p-24">

@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import * as tus from 'tus-js-client';
-import { createClient } from '@/utils/supabase/client';
+import { createClient } from '@/utils/pocketbase/client';
 import { useRouter } from 'next/navigation';
 import { getReplicateMonoTranscript } from '@/app/lib/actions';
 import AudioRecorder from '@/app/components/AudioRecorder';

@@ -1,9 +1,7 @@
 'use server'
 
 import { unstable_noStore as noStore, revalidatePath  } from 'next/cache';
-import { Database } from '../database.types';
-import { createClient } from '@/utils/supabase/server'
-import { createClient as createClientJS } from "@supabase/supabase-js";
+import { createServerClient } from '@/utils/pocketbase/server'
 import { Note, NoteWithPatient, PatientForTable, NoteForTable, Template } from './definitions';
 import { redirect } from 'next/navigation';
 
@@ -14,338 +12,248 @@ const ITEMS_PER_PAGE = 6;
 export async function fetchFilteredNotes(query: string, currentPage: number) {
   noStore()
   try {
+    const pb = createServerClient()
     
-    const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+    // Fetch all notes with expanded patient relation
+    const notes = await pb.collection('notes').getFullList({
+      expand: 'patient',
+      sort: '-appointment_date',
+    })
 
-    const supabase = createClient()
-    const { data: notes, error } = await supabase
-      .from('note')
-      .select(`
-      id,
-      chief_complaint,
-      status, 
-      appointment_date,
-      patient (
-        id,
-        first_name,
-        middle_name,
-        last_name
-      )`)
-      .order('appointment_date', { ascending: false });      
+    // Filter notes based on query
+    const notesFiltered = notes.filter(note => {
+      const patient = note.expand?.patient
+      if (!patient) return false
+      
+      return patient.first_name?.toLowerCase().includes(query.toLowerCase())
+        || patient.middle_name?.toLowerCase().includes(query.toLowerCase())
+        || patient.last_name?.toLowerCase().includes(query.toLowerCase())
+        || note.chief_complaint?.toLowerCase().includes(query.toLowerCase())
+        || note.status?.toLowerCase().includes(query.toLowerCase())
+        || (patient.first_name?.toLowerCase() + ' ' + patient.last_name?.toLowerCase()).includes(query.toLowerCase())
+    })
 
-    if (error) {
-      console.error('Error fetching notes:', error);
-      return
-    }
-
-    const notesFiltered = notes.filter(note => 
-      note.patient.first_name?.toLowerCase().includes(query.toLowerCase())
-      || note.patient.middle_name?.toLowerCase().includes(query.toLowerCase())
-      || note.patient.last_name?.toLowerCase().includes(query.toLowerCase())
-      || note.chief_complaint?.toLowerCase().includes(query.toLowerCase())
-      || note.status?.toLowerCase().includes(query.toLowerCase())
-      || (note.patient.first_name?.toLowerCase() + ' ' + note.patient.last_name?.toLowerCase()).includes(query.toLowerCase())
-    )
-    
-
-
-    // Implement custom sorting logic: processing at top, then "awaiting review", then "approved"
+    // Custom sorting logic: processing at top, then "awaiting review", then "approved"
     notesFiltered.sort((a, b) => {
-      // Prioritize "processing" status
-      if (a.status === 'processing' && b.status !== 'processing') {
-        return -1;
-      } else if (a.status !== 'processing' && b.status === 'processing') {
-        return 1;
-      }
-
-      // Then prioritize "awaiting review" status
-      if (a.status === 'awaiting review' && b.status !== 'awaiting review') {
-        return -1;
-      } else if (a.status !== 'awaiting review' && b.status === 'awaiting review') {
-        return 1;
-      }
-
-      // Then prioritize "draft" status (same as above)
-      if (a.status === 'draft' && b.status !== 'draft') {
-        return -1;
-      } else if (a.status !== 'draft' && b.status === 'draft') {
-        return 1;
-      }
-
-      // Finally, sort by status and then by appointment_date
+      if (a.status === 'processing' && b.status !== 'processing') return -1
+      if (a.status !== 'processing' && b.status === 'processing') return 1
+      
+      if (a.status === 'awaiting review' && b.status !== 'awaiting review') return -1
+      if (a.status !== 'awaiting review' && b.status === 'awaiting review') return 1
+      
+      if (a.status === 'draft' && b.status !== 'draft') return -1
+      if (a.status !== 'draft' && b.status === 'draft') return 1
+      
       if (a.status === b.status) {
-        // If both appointments have the same status, sort by appointment_date
-        // Since we know there will be no null appointment_date values, we can directly create Date objects
-        const aDate = new Date(a.appointment_date);
-        const bDate = new Date(b.appointment_date);
-        return bDate.getTime() - aDate.getTime(); // Sort in descending order
-    }
+        const aDate = new Date(a.appointment_date)
+        const bDate = new Date(b.appointment_date)
+        return bDate.getTime() - aDate.getTime()
+      }
+      
+      return 0
+    })
 
-      // Default return value if none of the above conditions are met
-      return 0;
-    });
+    const offset = (currentPage - 1) * ITEMS_PER_PAGE
+    const paginatedNotes = notesFiltered.slice(offset, offset + ITEMS_PER_PAGE).map(note => ({
+      id: note.id,
+      chief_complaint: note.chief_complaint,
+      status: note.status,
+      appointment_date: note.appointment_date,
+      patient: {
+        id: note.expand?.patient?.id,
+        first_name: note.expand?.patient?.first_name,
+        middle_name: note.expand?.patient?.middle_name,
+        last_name: note.expand?.patient?.last_name,
+      }
+    }))
+    
+    const totalPages = Math.ceil(notesFiltered.length / ITEMS_PER_PAGE) || 1
 
+    return { paginatedNotes, totalPages }
 
-    const paginatedNotes = notesFiltered.slice(offset, offset + ITEMS_PER_PAGE) || [];
-    const totalCount = notesFiltered.length || 1;
-
-    let totalPages = 1
-     if (totalCount) {
-      totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE)
-    }
-
-    return { paginatedNotes, totalPages };
-
- } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch appointments data.', error);
- }
+  } catch (error) {
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch appointments data.')
+  }
 }
 
 export async function fetchNotesPages(query: string) {
   try {
-    const supabase = createClient()
-     const { data, count, error } = await supabase
-       .from('note')
-       .select('*', { count: 'exact', head: true })
-      //  .ilike('combined_text', `%${query}%`)
- 
-     if (error) {
-       console.error('Supabase Error:', error);
-       throw new Error('Failed to fetch appointments count.');
-     }
-     let totalPages = 1
-     if (count) {
-      totalPages = Math.ceil(count / ITEMS_PER_PAGE)
-    }
-    
-      return totalPages;
+    const pb = createServerClient()
+    const notes = await pb.collection('notes').getFullList()
+    const totalPages = Math.ceil(notes.length / ITEMS_PER_PAGE) || 1
+    return totalPages
   } catch (error) {
-     console.error('Supabase Error:', error);
-     throw new Error('Failed to fetch notes count.');
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch notes count.')
   }
- }
-
+}
 
 export async function fetchNoteById(id: string) {
   try {
-    const supabase = createClient();
-    const { data: notes, error } = await supabase
-      .from('note')
-      .select(`
-      *,
-      patient (
-        id,
-        email,
-        date_of_birth,
-        allergies,
-        phone,
-        provider,
-        profile_notes,
-        first_name,
-        last_name,
-        address_street,
-        address_unit,
-        state,
-        city,
-        zipcode
-      )`)
-      .eq('id', id);
+    const pb = createServerClient()
+    const note = await pb.collection('notes').getOne(id, {
+      expand: 'patient',
+    })
 
-    if (error) {
-      throw new Error('Supabase Error: ' + error.message);
-    }
-
-    const note = notes ? notes[0] : null;
     if (!note) {
-      throw new Error(`Note with ID ${id} not found.`);
+      throw new Error(`Note with ID ${id} not found.`)
     }
 
-    return note as NoteWithPatient
+    // Transform to match NoteWithPatient type
+    return {
+      ...note,
+      patient_id: note.patient,
+      patient: {
+        id: note.expand?.patient?.id,
+        first_name: note.expand?.patient?.first_name,
+        middle_name: note.expand?.patient?.middle_name,
+        last_name: note.expand?.patient?.last_name,
+        email: note.expand?.patient?.email,
+        date_of_birth: note.expand?.patient?.date_of_birth,
+        allergies: note.expand?.patient?.allergies,
+        phone: note.expand?.patient?.phone,
+        provider: note.expand?.patient?.provider,
+        profile_notes: note.expand?.patient?.profile_notes,
+        address_street: note.expand?.patient?.address_street,
+        address_unit: note.expand?.patient?.address_unit,
+        state: note.expand?.patient?.state,
+        city: note.expand?.patient?.city,
+        zipcode: note.expand?.patient?.zipcode,
+      }
+    } as NoteWithPatient
   } catch (error) {
-    console.error('Error fetching note:', error);
-    throw new Error('Failed to fetch note data.');
+    console.error('Error fetching note:', error)
+    throw new Error('Failed to fetch note data.')
   }
 }
 
-
-export async function getSignedAudioUrl(userId: string, audio_url:string) {
+export async function getSignedAudioUrl(userId: string, audio_url: string) {
   try {
-    const supabase = createClient()
-    const { data, error } = await supabase
-      .storage
-      .from('audiofiles')
-      .createSignedUrl(`${userId}/${audio_url}`, 3600);
-
-    if (error) {
-      console.error('Supabase Storage Error:', error);
-      throw new Error('Failed to get signed audio URL.');
+    const pb = createServerClient()
+    // In PocketBase, files are accessed directly via the record
+    // We need to fetch the note that has this audio file
+    const notes = await pb.collection('notes').getFullList({
+      filter: `user = "${userId}" && audio_file != ""`,
+    })
+    
+    // Find the note with matching audio file
+    const note = notes.find(n => n.audio_file === audio_url)
+    if (!note) {
+      throw new Error('Audio file not found')
     }
-
-    const signedUrl = data?.signedUrl;
-
-    return signedUrl;
+    
+    // Generate file URL
+    const url = pb.files.getUrl(note, note.audio_file)
+    return url
   } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to get signed audio URL.');
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to get audio URL.')
   }
 }
-
 
 export async function deleteNote(formData: FormData) {
-  const id = formData.get('id');
+  const id = formData.get('id') as string
   
-  const supabase = createClient();
+  const pb = createServerClient()
 
-  const { error } = await supabase
-    .from('note')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    console.error('Error deleting note from Supabase:', error);
-    throw new Error('Failed to delete the note.');
+  try {
+    await pb.collection('notes').delete(id)
+    console.log('Note deleted successfully')
+    revalidatePath('/dashboard/notes')
+    redirect('/dashboard/notes')
+  } catch (error) {
+    console.error('Error deleting note from PocketBase:', error)
+    throw new Error('Failed to delete the note.')
   }
-
-  console.log('Note deleted successfully');
-  revalidatePath('/dashboard/notes');
-  redirect('/dashboard/notes'); 
 }
-
 
 // TEMPLATES
 
 export async function fetchTemplates() {
   noStore()
   try {
-    const supabase = createClient()
-    const { data: templates, error } = await supabase
-      .from('template')
-      .select(
-        '*'
-      )
-
-    if (error) {
-      console.error('Error fetching templates:', error);
-      return
-    }
-  return templates as Template[]
- } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch templates data.');
- }
+    const pb = createServerClient()
+    const templates = await pb.collection('templates').getFullList()
+    return templates as Template[]
+  } catch (error) {
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch templates data.')
+  }
 }
-
 
 export async function fetchTemplateById(id: string) {
   noStore()
   try {
-    const supabase = createClient()
-    const { data: templates, error } = await supabase
-      .from('template')
-      .select('*')
-      .eq('id', id);
-
-    if (error) {
-      console.error('Supabase Error:', error);
-      throw new Error('Failed to fetch template data.');
-    }
-
-    const template = templates ? templates[0] : null;
+    const pb = createServerClient()
+    const template = await pb.collection('templates').getOne(id)
     return template
   } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch template data.');
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch template data.')
   }
 }
 
 export async function deleteTemplate(id: string) {
-  const supabase = createClient();
+  const pb = createServerClient()
 
-  const { error } = await supabase
-    .from('template')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    console.error('Error deleting template from Supabase:', error);
-    throw new Error('Failed to delete the template.');
+  try {
+    await pb.collection('templates').delete(id)
+    return { success: true }
+  } catch (error) {
+    console.error('Error deleting template from PocketBase:', error)
+    throw new Error('Failed to delete the template.')
   }
-
-  return { success: true }; // Return success or failure
 }
 
 // PATIENTS
 
 export async function fetchPatients() {
-  noStore();
-try {
-    const supabase = createClient()
-    const { data: patients, error } = await supabase
-      .from('patient')
-      .select(
-        'id, first_name,  middle_name, last_name, email, phone, address_street, address_unit, city, state, zipcode, country, provider, date_of_birth, allergies, profile_notes'
-      )
-      // .ilike('audio_transcript', `%${query}%`)
-      .order('last_name', { ascending: true })
-
-    if (error) {
-      console.error('Error fetching patients:', error);
-      return
-    }
-  return patients
- } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch paients data.');
- }
+  noStore()
+  try {
+    const pb = createServerClient()
+    const patients = await pb.collection('patients').getFullList({
+      sort: 'last_name',
+    })
+    return patients
+  } catch (error) {
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch patients data.')
+  }
 }
 
 export async function fetchPatientsWithSameName(first_name: string, last_name: string) {
   try {
-    const supabase = createClient()
-    const { data: patients, error } = await supabase
-      .from('patient')
-      .select(
-        'id, first_name, middle_name, last_name, date_of_birth'
-      )
-      .eq('first_name', first_name)
-      .eq('last_name', last_name)
-
-    if (error) {
-      console.error('Error fetching patients by name:', error);
-      throw new Error('Failed to fetch patients by name data')
-    }
-  
+    const pb = createServerClient()
+    const patients = await pb.collection('patients').getFullList({
+      filter: `first_name = "${first_name}" && last_name = "${last_name}"`,
+    })
     return patients
-  
- } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch patients by name data.');
- }
+  } catch (error) {
+    console.error('Error fetching patients by name:', error)
+    throw new Error('Failed to fetch patients by name data')
+  }
 }
 
-
 export async function checkForExistingPatient(formData: FormData) {
-  let first_name = formData.get('first_name') as string;
-  let last_name = formData.get('last_name') as string;
+  let first_name = formData.get('first_name') as string
+  let last_name = formData.get('last_name') as string
 
-
-  let patientsWithSameName = await fetchPatientsWithSameName(first_name, last_name);
+  let patientsWithSameName = await fetchPatientsWithSameName(first_name, last_name)
   
   if (patientsWithSameName.length > 0) {
-    return {exists: true, patients: patientsWithSameName}
+    return { exists: true, patients: patientsWithSameName }
   } else { 
-    await addPatient(formData);
+    await addPatient(formData)
     return { exists: false }
-   }
+  }
 }
 
 export async function addPatient(formData: FormData) {
-    const supabase = createClient();
+  const pb = createServerClient()
 
-  const { error, data } = await supabase
-    .from('patient')
-    .insert({
+  try {
+    const patient = await pb.collection('patients').create({
       first_name: formData.get('first_name') as string,
       middle_name: formData.get('middle_name') as string,
       last_name: formData.get('last_name') as string,
@@ -364,28 +272,20 @@ export async function addPatient(formData: FormData) {
       pharmacy_name: formData.get('pharmacy_name') as string,
       pharmacy_phone: formData.get('pharmacy_phone') as string,
     })
-    .select();
-  if (error) {
-    console.error('Supabase error creating or updating patient:', error);
-    return;
-  }
-  if (data && data.length > 0) {
-  
-    let patientId = data[0].id;
-    redirect(`/dashboard/patients/${patientId}`);
-  } else {
-    console.error('Update successful, but data is not as expected');
+
+    redirect(`/dashboard/patients/${patient.id}`)
+  } catch (error) {
+    console.error('PocketBase error creating patient:', error)
+    throw new Error('Failed to create patient.')
   }
 }
 
 export async function editPatient(formData: FormData) {
-  const supabase = createClient();
+  const pb = createServerClient()
+  let patientId = formData.get('id') as string
 
-  let patientId = formData.get('id')
-
-  const { error, data } = await supabase
-    .from('patient')
-    .update({
+  try {
+    await pb.collection('patients').update(patientId, {
       first_name: formData.get('first_name') as string,
       middle_name: formData.get('middle_name') as string,
       last_name: formData.get('last_name') as string,
@@ -404,201 +304,209 @@ export async function editPatient(formData: FormData) {
       pharmacy_name: formData.get('pharmacy_name') as string,
       pharmacy_phone: formData.get('pharmacy_phone') as string,
     })
-    .eq('id', formData.get('id'))
-    .select();
-  if (error) {
-    console.error('Supabase error creating or updating patient:', error);
 
-    return;
-  }
-  if (data && data.length > 0) {
-    
-    redirect(`/dashboard/patients/${patientId}`);
-  } else {
-    // Handle the case where the update was successful but the data is not as expected
-    console.error('Update successful, but data is not as expected');
+    redirect(`/dashboard/patients/${patientId}`)
+  } catch (error) {
+    console.error('PocketBase error updating patient:', error)
+    throw new Error('Failed to update patient.')
   }
 }
 
-export async function fetchPatientsWithQuery(query:string, currentPage: number) {
-  noStore();
-  const offset = (currentPage - 1) * ITEMS_PER_PAGE;
-try {
-    const supabase = createClient()
-    const { data: patients, error } = await supabase
-      .from('patient')
-      .select(
-        'id, first_name, middle_name, last_name, date_of_birth'
-      )
-      .or(`first_name.ilike.%${query}%,middle_name.ilike.%${query}%,last_name.ilike.%${query}%`)
-      .order('last_name', { ascending: true })
-
-    if (error) {
-      console.error('Error fetching patients:', error);
-      return
+export async function fetchPatientsWithQuery(query: string, currentPage: number) {
+  noStore()
+  const offset = (currentPage - 1) * ITEMS_PER_PAGE
+  
+  try {
+    const pb = createServerClient()
+    
+    let patients;
+    if (query && query.trim()) {
+      patients = await pb.collection('patients').getFullList({
+        filter: `first_name ~ "${query}" || middle_name ~ "${query}" || last_name ~ "${query}"`,
+        sort: 'last_name',
+      })
+    } else {
+      patients = await pb.collection('patients').getFullList({
+        sort: 'last_name',
+      })
     }
-  
 
-  const paginatedPatients = patients.slice(offset, offset + ITEMS_PER_PAGE);
-  return paginatedPatients as PatientForTable[];
-  
- } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch paients data.');
- }
+    const paginatedPatients = patients.slice(offset, offset + ITEMS_PER_PAGE)
+    return paginatedPatients as PatientForTable[]
+  } catch (error) {
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch patients data.')
+  }
 }
 
-export async function countPatientPagesWithQuery(query:string) {
-  noStore();
+export async function countPatientPagesWithQuery(query: string) {
+  noStore()
   
-try {
-    const supabase = createClient()
-    const { count: totalPatients, error: countError } = await supabase
-      .from('patient')
-      .select(
-        'id', { count: 'exact', head: true}
-      )
-      .or(`first_name.ilike.%${query}%,middle_name.ilike.%${query}%,last_name.ilike.%${query}%`)
-
-    if (countError) {
-      console.error('Error counting patients:', countError);
-      return
-    }
-  
-  let pages:number = 0
-  if (totalPatients) {
-      pages = Math.ceil(totalPatients / ITEMS_PER_PAGE)
-    }
+  try {
+    const pb = createServerClient()
     
-      return pages;
-  
-  
- } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch paients data.');
- }
+    let patients;
+    if (query && query.trim()) {
+      patients = await pb.collection('patients').getFullList({
+        filter: `first_name ~ "${query}" || middle_name ~ "${query}" || last_name ~ "${query}"`,
+      })
+    } else {
+      patients = await pb.collection('patients').getFullList()
+    }
+
+    const pages = Math.ceil(patients.length / ITEMS_PER_PAGE) || 1
+    return pages
+  } catch (error) {
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch patients data.')
+  }
 }
 
 export async function fetchPatientCount() {
-try {
-    const supabase = createClient()
-  // const { data: count, error } = await supabase
-  //   .from('patient')
-  //   .select('*', { count: 'exact', head: true });
-  const { data, error } = await supabase
-    .from('patient')
-    .select('id');
-
-  if (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch paient count.');
-  }
-  // console.log("patient count:", data.length)
-  return data.length;
-} catch (error) {
-  console.error('Unexpected Error:', error);
-    throw new Error('Failed to fetch patient count due to an unexpected error.');
+  try {
+    const pb = createServerClient()
+    const patients = await pb.collection('patients').getFullList()
+    return patients.length
+  } catch (error) {
+    console.error('Unexpected Error:', error)
+    throw new Error('Failed to fetch patient count due to an unexpected error.')
   }
 }
 
-
 export async function fetchPatientById(id: string) {
-  // EXPERIMENTAL. noStore() allows for immediate re-render of changed appointment data, but may lead to slower load times.
   noStore()
   try {
-    const supabase = createClient()
-    const { data: patients, error } = await supabase
-      .from('patient')
-      .select('*')
-      .eq('id', id);
-
-    if (error) {
-      console.error('Supabase Error:', error);
-      throw new Error('Failed to fetch patient data.');
-    }
-
-    const patient = patients ? patients[0] : null;
+    const pb = createServerClient()
+    const patient = await pb.collection('patients').getOne(id)
     return patient
   } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch patient data.');
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch patient data.')
   }
 }
 
 export async function fetchPatientProfileById(id: string) {
-  // EXPERIMENTAL. noStore() allows for immediate re-render of changed appointment data, but may lead to slower load times.
   noStore()
   try {
-    const supabase = createClient()
-    const { data: patients, error } = await supabase
-      .from('patient')
-      .select(`*, 
-        note(id, appointment_type, chief_complaint, appointment_date, appointment_specialty, status)`
-      )
-      .eq('id', id);
+    const pb = createServerClient()
+    
+    // Fetch patient
+    const patient = await pb.collection('patients').getOne(id)
+    
+    // Fetch notes for this patient
+    const notes = await pb.collection('notes').getFullList({
+      filter: `patient = "${id}"`,
+      sort: '-appointment_date',
+    })
 
-    if (error) {
-      console.error('Supabase Error:', error);
-      throw new Error('Failed to fetch patient data.');
+    return {
+      ...patient,
+      note: notes.map(n => ({
+        id: n.id,
+        appointment_type: n.appointment_type,
+        chief_complaint: n.chief_complaint,
+        appointment_date: n.appointment_date,
+        appointment_specialty: n.appointment_specialty,
+        status: n.status,
+      }))
     }
-
-    const patient = patients ? patients[0] : null;
-
-    return patient
   } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch patient data.');
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch patient data.')
   }
 }
 
 // USER_SETTINGS
 
 export async function fetchUserSettings() {
-  noStore();
+  noStore()
   try {
-    const supabase = createClient()
-    const { data: settings, error } = await supabase
-      .from('user_settings')
-      .select('*')
+    const pb = createServerClient()
+    const userId = pb.authStore.model?.id
+    
+    if (!userId) {
+      // Return defaults if not authenticated
+      return {
+        appointment_types: [],
+        appointment_types_default: '',
+        appointment_specialties: [],
+        appointment_specialties_default: '',
+        theme: 'light',
+        user_id: '',
+      }
+    }
 
-    if (error) {
-      console.error('Error fetching user settings:', error);
-      return
+    const settings = await pb.collection('user_settings').getFullList({
+      filter: `user = "${userId}"`,
+    })
+    
+    // Return defaults if no settings exist
+    if (!settings || settings.length === 0) {
+      return {
+        appointment_types: [],
+        appointment_types_default: '',
+        appointment_specialties: [],
+        appointment_specialties_default: '',
+        theme: 'light',
+        user_id: userId,
+      }
     }
     
-    return settings[0];
- } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch user settings data.');
- }
+    return settings[0]
+  } catch (error) {
+    console.error('PocketBase Error:', error)
+    // Return defaults on error instead of throwing
+    return {
+      appointment_types: [],
+      appointment_types_default: '',
+      appointment_specialties: [],
+      appointment_specialties_default: '',
+      theme: 'light',
+      user_id: '',
+    }
+  }
 }
 
 export async function updateUserSettings(payload: any, userId: string) {
-  noStore();
-  // console.log("calling updateUserSettings with payload:", payload);
-  const supabase = createClient()
-  const { error }  = await supabase
-      .from('user_settings')
-      .update(payload)
-      .eq('user_id', userId)
-
-  if (error) {
-    console.log("Error updating user settings:", error);
-  }
-  }
+  noStore()
+  const pb = createServerClient()
   
+  try {
+    // Find the user_settings record for this user
+    const settings = await pb.collection('user_settings').getFullList({
+      filter: `user = "${userId}"`,
+    })
 
+    if (settings.length > 0) {
+      await pb.collection('user_settings').update(settings[0].id, payload)
+    } else {
+      // Create if doesn't exist
+      await pb.collection('user_settings').create({
+        user: userId,
+        ...payload,
+      })
+    }
+  } catch (error) {
+    console.log('Error updating user settings:', error)
+  }
+}
 
 // AUTH / USER
 
 export const fetchUserSession = async () => {
   try {
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession();
-    return session;
+    const pb = createServerClient()
+    
+    if (pb.authStore.isValid && pb.authStore.model) {
+      return {
+        user: pb.authStore.model,
+        access_token: pb.authStore.token,
+      }
+    }
+    
+    return null
   } catch (error) {
-    console.error('Supabase Error:', error);
-    throw new Error('Failed to fetch user session.');
+    console.error('PocketBase Error:', error)
+    throw new Error('Failed to fetch user session.')
   }
-};
-
+}

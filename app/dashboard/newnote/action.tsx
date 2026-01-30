@@ -1,6 +1,6 @@
 'use server';
 
-import { createClient } from '@/utils/supabase/server';
+import { createServerClient } from '@/utils/pocketbase/server';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 

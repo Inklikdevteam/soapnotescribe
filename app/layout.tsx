@@ -2,6 +2,7 @@ import '@/app/ui/global.css';
 import { inter } from '@/app/ui/fonts';
 import { Metadata } from 'next';
 import { GeistSans } from 'geist/font/sans';
+import ThemeInitializer from '@/app/components/ThemeInitializer';
 
 export const metadata: Metadata = {
   title: {
@@ -18,8 +19,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={`${GeistSans.className} antialiased `}>{children}</body>
+    <html lang="en" data-theme="light">
+      <body className={`${GeistSans.className} antialiased `}>
+        <ThemeInitializer />
+        {children}
+      </body>
     </html>
   );
 }

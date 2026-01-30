@@ -22,15 +22,21 @@ export const formatCurrency = (amount: number) => {
 };
 
 export const formatDateToLocal = (
-  dateStr: string | null,
+  dateStr: string | null | undefined,
   locale: string = 'en-US',
 ) => {
 
-  if (dateStr === null) {
+  if (!dateStr) {
     return '';
- }
+  }
  
   const date = new Date(dateStr);
+  
+  // Check if date is valid
+  if (isNaN(date.getTime())) {
+    return '';
+  }
+  
   const options: Intl.DateTimeFormatOptions = {
     day: 'numeric',
     month: 'short',
@@ -41,10 +47,22 @@ export const formatDateToLocal = (
   return formatter.format(date);
 };
 
-export const formatTime = (timeString: string) => {
+export const formatTime = (timeString: string | null | undefined) => {
+  if (!timeString) {
+    return '';
+  }
+  
   const timeParts = timeString.split(':');
+  if (timeParts.length < 2) {
+    return timeString; // Return as-is if not in expected format
+  }
+  
   const hours = parseInt(timeParts[0]);
   const minutes = parseInt(timeParts[1]);
+
+  if (isNaN(hours) || isNaN(minutes)) {
+    return timeString;
+  }
 
   const date = new Date();
   date.setHours(hours);

@@ -8,34 +8,25 @@ import {
 } from '@/app/ui/notes/buttons';
 import { formatDateToLocal } from '@/app/lib/utils';
 import { useEffect } from 'react';
-import { createClient } from '@/utils/supabase/client';
+import { createClient } from '@/utils/pocketbase/client';
 import { useRouter } from 'next/navigation';
 import { Note, NoteWithPatient } from '@/app/lib/definitions';
 
 export default function NotesTable({ notes }: { notes: NoteWithPatient[] }) {
-  const supabase = createClient();
+  const pb = createClient();
   const router = useRouter();
 
   useEffect(() => {
-    const channel = supabase
-      .channel('postgresChangesChannel')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'note',
-        },
-        () => {
-          router.refresh();
-        },
-      )
-      .subscribe();
+    // Subscribe to realtime changes on the notes collection
+    pb.collection('notes').subscribe('*', () => {
+      router.refresh();
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      // Unsubscribe when component unmounts
+      pb.collection('notes').unsubscribe('*');
     };
-  }, [supabase, router]);
+  }, [pb, router]);
 
   return (
     <div className="mt-6 flow-root">

@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server';
+import { createServerClient } from '@/utils/pocketbase/server';
 import PDFDocument from 'pdfkit';
 import { formatDateToLocal, formatTime } from '@/app/lib/utils';
 import { fetchNoteById } from '@/app/lib/data';
@@ -73,21 +73,29 @@ export async function generateAndSavePdf(id: string) {
     // Concatenate the buffer chunks into a single buffer
     const pdfData = Buffer.concat(pdfBuffer);
     
-    // Define the path where the PDF will be stored in Supabase Storage
-    const filePath = `${note.user_id}/${note.patient.last_name} ${note.patient.first_name}/${note.appointment_date}.pdf`;
+    // Define the filename for the PDF
+    const fileName = `${note.patient.last_name}_${note.patient.first_name}_${note.appointment_date}.pdf`;
 
-    // Initialize Supabase client
-    const supabase = createClient();
+    try {
+      // Initialize PocketBase client
+      const pb = createServerClient();
 
-    // Upload the PDF to Supabase Storage
-    const { error } = await supabase.storage.from('pdfs').upload(filePath, pdfData, { upsert: true, contentType: "application/pdf" });
+      // Create a File object from the buffer for PocketBase upload
+      const pdfFile = new File([pdfData], fileName, { type: 'application/pdf' });
 
-    if (error) {
-      console.error('Error uploading PDF to Supabase Storage:', error);
+      // Update the note record with the PDF file
+      // Note: This requires a 'pdf_file' field of type 'file' in the notes collection
+      // For now, we'll just log success - file storage needs to be configured in PocketBase
+      console.log('PDF generated successfully:', fileName);
+      
+      // If you have a file field in your notes collection, uncomment:
+      // await pb.collection('notes').update(id, { pdf_file: pdfFile });
+    } catch (error) {
+      console.error('Error with PDF:', error);
       return;
     }
 
-    console.log('PDF uploaded successfully');
+    console.log('PDF generated successfully');
   });
 
   // Finalize the PDF

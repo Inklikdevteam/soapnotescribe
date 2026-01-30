@@ -89,10 +89,12 @@ const CreateNote = () => {
   useEffect(() => {
     const getUserSettings = async () => {
       const userSettings = await fetchUserSettings();
-      setAppointmentTypes(userSettings.appointment_types);
-      setAppointmentType(userSettings.appointment_types_default);
-      setAppointmentSpecialties(userSettings.appointment_specialties);
-      setAppointmentSpecialty(userSettings.appointment_specialties_default);
+      if (userSettings) {
+        setAppointmentTypes(userSettings.appointment_types || []);
+        setAppointmentType(userSettings.appointment_types_default || '');
+        setAppointmentSpecialties(userSettings.appointment_specialties || []);
+        setAppointmentSpecialty(userSettings.appointment_specialties_default || '');
+      }
     };
     getUserSettings();
   }, []);
@@ -342,6 +344,7 @@ const CreateNote = () => {
                 hidden
                 type="number"
                 value={patientAgeYears}
+                readOnly
               ></input>
             </div>
 

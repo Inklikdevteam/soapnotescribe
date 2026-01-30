@@ -31,7 +31,8 @@ export default function LoginPage() {
       setError(result.error);
       setLoading(false);
     } else {
-      router.push('/');
+      // Force a full page reload to ensure cookies are set
+      window.location.href = '/dashboard/notes';
     }
   };
 
@@ -74,10 +75,10 @@ export default function LoginPage() {
           <p className="text-gray-500">Don't yet have an account?</p>
 
           <Link
-            href="/waitlist"
+            href="/signup"
             className="my-1 text-center underline underline-offset-4"
           >
-            join the waitlist
+            sign up
           </Link>
         </div>
       </div>

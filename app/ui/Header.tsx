@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server';
+import { createServerClient } from '@/utils/pocketbase/server';
 import Link from 'next/link';
 import Logo from './logo';
 

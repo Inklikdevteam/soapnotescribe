@@ -11,14 +11,15 @@ import Link from 'next/link';
 import Image from 'next/image';
 import Header from './ui/Header';
 import { redirect } from 'next/navigation';
-import { createClient } from '@/utils/supabase/server';
+import { createServerClient } from '@/utils/pocketbase/server';
 import { fetchPatientCount } from './lib/data';
 
 export default async function Page() {
-  const supabase = createClient();
+  const pb = createServerClient();
+  const signupsDisabled = process.env.DISABLE_SIGNUPS === 'true';
 
-  const { data, error } = await supabase.auth.getUser();
-  if (data.user) {
+  const user = pb.authStore.model;
+  if (user) {
     // get number of patients. If 0, redirect to 'add patient' page.
     const count = await fetchPatientCount();
     if (count === null) {
@@ -68,17 +69,19 @@ export default async function Page() {
             className="my-8 rounded-lg shadow-lg"
           ></Image>
           <div className="justify-items-between my-4 grid w-[300px] grid-cols-2 items-center justify-center pb-4 align-middle">
+            {!signupsDisabled && (
+              <Link
+                href="/signup"
+                className=" mx-2 w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-md transition-all hover:bg-teal-500 hover:text-white"
+              >
+                sign up
+              </Link>
+            )}
             <Link
-              href="/waitlist"
-              className=" mx-2 w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-md transition-all hover:bg-teal-500 hover:text-white"
+              href="/login"
+              className={`mx-2 w-32 rounded-full border bg-white py-3 text-center font-bold transition-all hover:text-teal-600 ${signupsDisabled ? 'col-span-2' : ''}`}
             >
-              join waitlist
-            </Link>
-            <Link
-              href="#pricing"
-              className="mx-2 w-32 rounded-full border bg-white py-3 text-center font-bold transition-all hover:text-teal-600"
-            >
-              see pricing
+              log in
             </Link>
           </div>
         </div>
@@ -150,12 +153,21 @@ export default async function Page() {
           ></Image>
         </div>
         <div className="flex w-full bg-[#B30A2A43] pb-12 pt-4">
-          <Link
-            href="/waitlist"
-            className="mx-auto w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-lg hover:bg-teal-500 hover:text-white"
-          >
-            join waitlist
-          </Link>
+          {!signupsDisabled ? (
+            <Link
+              href="/signup"
+              className="mx-auto w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-lg hover:bg-teal-500 hover:text-white"
+            >
+              sign up
+            </Link>
+          ) : (
+            <Link
+              href="/login"
+              className="mx-auto w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-lg hover:bg-teal-500 hover:text-white"
+            >
+              log in
+            </Link>
+          )}
         </div>
       </div>
 
@@ -170,18 +182,20 @@ export default async function Page() {
         </p>
 
         <div className="mx-auto flex flex-row items-center justify-center pb-8 align-middle">
-          <Link
-            href="/waitlist"
-            className="mx-2 w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-md transition-all hover:bg-teal-500 hover:text-white"
-          >
-            join waitlist
-          </Link>
+          {!signupsDisabled && (
+            <Link
+              href="/signup"
+              className="mx-2 w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-md transition-all hover:bg-teal-500 hover:text-white"
+            >
+              sign up
+            </Link>
+          )}
 
           <Link
-            href="#pricing"
+            href="/login"
             className="mx-2 w-32 rounded-full border py-3 text-center font-bold transition-all hover:text-teal-600"
           >
-            see pricing
+            log in
           </Link>
           <Image
             src="/hipaa.svg"
@@ -272,20 +286,22 @@ export default async function Page() {
           </div>
         </div>
         <div className="flex w-full bg-[#B30A2A43] pb-12 pt-4">
-          <Link
-            href="/waitlist"
-            className="mx-auto w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-lg hover:bg-teal-500 hover:text-white"
-          >
-            join waitlist
-          </Link>
+          {!signupsDisabled ? (
+            <Link
+              href="/signup"
+              className="mx-auto w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-lg hover:bg-teal-500 hover:text-white"
+            >
+              sign up
+            </Link>
+          ) : (
+            <Link
+              href="/login"
+              className="mx-auto w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-lg hover:bg-teal-500 hover:text-white"
+            >
+              log in
+            </Link>
+          )}
         </div>
-
-        {/* <Link
-            href="/signup"
-            className="mx-auto w-32 rounded-full bg-teal-600 py-3 text-center font-bold text-white shadow-md hover:bg-teal-500 hover:text-white"
-          >
-            get started
-          </Link> */}
       </div>
     </main>
   );

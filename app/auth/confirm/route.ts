@@ -1,33 +1,16 @@
-import { type EmailOtpType } from '@supabase/supabase-js'
 import { type NextRequest, NextResponse } from 'next/server'
 
-import { createClient } from '@/utils/supabase/server'
-
+// PocketBase handles email confirmation automatically
+// This route can be simplified or removed
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
-  const token_hash = searchParams.get('token_hash')
-  const type = searchParams.get('type') as EmailOtpType | null
-  const next = searchParams.get('next') ?? '/'
+  const token = searchParams.get('token')
 
-  const redirectTo = request.nextUrl.clone()
-  redirectTo.pathname = next
-  redirectTo.searchParams.delete('token_hash')
-  redirectTo.searchParams.delete('type')
-
-  if (token_hash && type) {
-    const supabase = createClient()
-
-    const { error } = await supabase.auth.verifyOtp({
-      type,
-      token_hash,
-    })
-    if (!error) {
-      redirectTo.searchParams.delete('next')
-      return NextResponse.redirect(redirectTo)
-    }
+  if (token) {
+    // Redirect to login with success message
+    return NextResponse.redirect(new URL('/login?confirmed=true', request.url))
   }
 
-  // return the user to an error page with some instructions
-  redirectTo.pathname = '/error'
-  return NextResponse.redirect(redirectTo)
+  // Redirect to error page if no token
+  return NextResponse.redirect(new URL('/error', request.url))
 }

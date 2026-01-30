@@ -8,7 +8,7 @@ import { getSignedAudioUrl } from '@/app/lib/data';
 import AudioPlayer from '@/app/components/AudioPlayer';
 import { DeleteNoteFirstStep } from '@/app/ui/notes/buttons';
 import { CancelGoBackButton } from '@/app/ui/buttons/Buttons';
-import { createClient } from '@/utils/supabase/client';
+import { createClient } from '@/utils/pocketbase/client';
 import { useRouter } from 'next/navigation';
 
 interface ProcessingNoteProps {

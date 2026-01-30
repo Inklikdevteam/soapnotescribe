@@ -2,14 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Microphone, Play, Pause, Stop } from '@phosphor-icons/react';
-import * as tus from 'tus-js-client';
-import { createClient } from '@/utils/supabase/client';
+import { createClient } from '@/utils/pocketbase/client';
 import { useRouter } from 'next/navigation';
 import { getReplicateMonoTranscript } from '@/app/lib/actions';
-import { revalidatePath } from 'next/cache';
 import clsx from 'clsx';
 import { AMRPlayer, Player } from 'web-amr';
-import { fetchPatientProfileById, fetchUserSettings } from '../lib/data';
+import { createNoteFromAudio } from '@/app/dashboard/newnote/audioAction';
 
 interface AudioUploadRecordProps {
   patientId: string;
@@ -22,8 +20,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
   const [percentageUploaded, setPercentageUploaded] = useState(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const router = useRouter();
-  const supabase = createClient();
-  const accessTokenRef = useRef<string | undefined>('');
+  const pb = createClient();
   const userIDRef = useRef<string | undefined>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isAMR, setIsAMR] = useState<boolean>(false);
@@ -34,7 +31,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
   const [elapsedRecordingTime, setElapsedRecordingTime] = useState<string>('');
   const [playbackTimeFormatted, setPlaybackTimeFormatted] = useState('0:00');
   const [totalDuration, setTotalDuration] = useState<string>('0:00');
-  const [decibelArray, setDecibelArray] = useState<number[]>([]); // State to store decibel levels
+  const [decibelArray, setDecibelArray] = useState<number[]>([]);
 
   const [status, setStatus] = useState<
     | 'initial'
@@ -53,20 +50,12 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const drawVisualRef = useRef<number | null>(null);
 
-  // file upload functions
+  // Get user ID from PocketBase auth
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.error(error);
-      } else {
-        userIDRef.current = data.session?.user.id;
-        accessTokenRef.current = data.session?.access_token;
-      }
-    };
-
-    fetchUser();
-  }, []);
+    if (pb.authStore.isValid && pb.authStore.model) {
+      userIDRef.current = pb.authStore.model.id;
+    }
+  }, [pb]);
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     if (status !== 'initial') return;
@@ -141,33 +130,19 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
   }, [audioFile]);
 
   async function handleAudioFileInput(file: File) {
-    // Create and set a url for audio player
     const url = URL.createObjectURL(file);
     setAudioUrl(url);
-
     setAudioFile(file);
 
-    // Pass along metadata to audioPlayer(Ref)
     if (file.type !== 'audio/amr' && audioPlayerRef.current) {
       audioPlayerRef.current.addEventListener('loadedmetadata', () => {
-        // Duration is now available
-        // Pass along metadata to audioPlayer(Ref)
-        // For example, setting total duration somewhere in your state or props
         setElapsedRecordingTime(
           formatTime(audioPlayerRef.current?.duration || 0),
         );
       });
     }
 
-    // Update status to audioAvailable
     setStatus('audioAvailable');
-  }
-
-  async function getDownloadUrl(fileName: string) {
-    const { data, error } = await supabase.storage
-      .from('audiofiles')
-      .createSignedUrl(`${userIDRef.current}/${fileName}`, 1200);
-    return data?.signedUrl;
   }
 
   async function handleUploadClick() {
@@ -188,136 +163,68 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
     }
   }
 
-  // Convert in-browser recording from Blob to File. Add prefix. Pass file to uploadFile.
   const handleAudioBlob = async (blob: Blob) => {
     if (!blob) return;
     try {
-      const mimeType = blob.type;
-      const extension = mimeType.split('/')[1];
+      const mimeType = blob.type || 'audio/wav';
+      const extension = mimeType.split('/')[1] || 'wav';
       const fileName = `recording-${self.crypto.randomUUID()}.${extension}`;
-      const file = new File([blob], fileName, { type: mimeType });
-      await uploadFile('audiofiles', fileName, file);
+      await createNoteWithAudio(blob, fileName, mimeType);
     } catch (error) {
       console.error('Error uploading file:', error);
+      throw error;
     }
   };
 
-  // Add prefix to uploaded audio file. Pass file to uploadFile.
   async function handleAudioFile(file: File | null) {
     if (!file) return;
     try {
-      const extension = file.name.split('.').pop(); // Get the file extension
-      const fileName = `audiofile-${self.crypto.randomUUID()}.${extension}`;
-      await uploadFile('audiofiles', fileName, file);
+      // Read file as base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+      });
+      reader.readAsDataURL(file);
+      const base64Data = await base64Promise;
+      
+      await createNoteWithAudio(null, file.name, file.type, base64Data);
     } catch (error) {
       console.error('Error uploading file:', error);
+      throw error;
     }
   }
 
-  async function uploadFile(bucketName: string, fileName: string, file: File) {
-    return new Promise((resolve, reject) => {
-      const upload = new tus.Upload(file, {
-        endpoint: `https://grjecfvldxcnvhmjpvmu.supabase.co/storage/v1/upload/resumable`,
-        retryDelays: [0, 3000, 5000, 10000, 20000],
-        headers: {
-          authorization: `Bearer ${accessTokenRef.current}`,
-          'x-upsert': 'true',
-        },
-        uploadDataDuringCreation: true,
-        removeFingerprintOnSuccess: true,
-        metadata: {
-          bucketName,
-          objectName: `${userIDRef.current}/${fileName}`,
-          contentType: file.type,
-          cacheControl: '3600',
-        },
-        chunkSize: 6 * 1024 * 1024,
-        onError: function (error) {
-          console.log('Failed because: ' + error);
-          reject(error);
-        },
-        onProgress: function (bytesUploaded, bytesTotal) {
-          var percentage = ((bytesUploaded / bytesTotal) * 100).toFixed(2);
-          setPercentageUploaded(parseFloat(percentage));
-          // console.log(bytesUploaded, bytesTotal, percentage + '%');
-        },
-        onSuccess: async function () {
-          setUploadComplete(true);
-          try {
-            const signedUrl = await getDownloadUrl(fileName);
-            // console.log('signedUrl:', signedUrl);
-
-            // Check if signedUrl is defined before setting the state
-            if (signedUrl !== undefined) {
-              createNote(fileName, signedUrl);
-            } else {
-              console.error('Error: Signed URL is undefined');
-            }
-          } catch (error) {
-            console.error('Error fetching signed URL:', error);
-          }
-          resolve(null); // CHECK EFFECT OF NULL
-        },
-      });
-
-      // Check if there are any previous uploads to continue.
-      upload.findPreviousUploads().then(function (previousUploads) {
-        if (previousUploads.length) {
-          upload.resumeFromPreviousUpload(previousUploads[0]);
-        }
-
-        upload.start();
-      });
-    });
-  }
-
-  async function createNote(audio_storage_url: string, temp_audio_url: string) {
+  async function createNoteWithAudio(blob: Blob | null, fileName: string, mimeType: string, base64Data?: string) {
     try {
-      // 1. Fetch necessary data from patient and user_settings tables
-      const { data: patientData, error: patientError } = await supabase
-        .from('patient')
-        .select('allergies, state')
-        .eq('id', patientId)
-        .single();
+      let audioDataToSend: string | undefined;
+      
+      if (blob) {
+        // Convert blob to base64
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+        });
+        reader.readAsDataURL(blob);
+        audioDataToSend = await base64Promise;
+      } else if (base64Data) {
+        audioDataToSend = base64Data;
+      }
+      
+      // Use server action to create note with audio
+      const result = await createNoteFromAudio(patientId, audioDataToSend, fileName, mimeType);
 
-      const { data: userSettings, error: settingsError } = await supabase
-        .from('user_settings')
-        .select('appointment_types_default, appointment_specialties_default')
-        .single();
-
-      if (patientError || settingsError) {
-        console.error('Error fetching data:', patientError || settingsError);
-        return;
+      if (result.error) {
+        throw new Error(result.error);
       }
 
-      const { error, data } = await supabase
-        .from('note')
-        .insert({
-          user_id: userIDRef.current as string,
-          audio_storage_url,
-          temp_audio_url,
-          patient_id: patientId,
-          allergies: patientData.allergies,
-          patient_location: patientData.state,
-          appointment_type: userSettings.appointment_types_default,
-          appointment_specialty: userSettings.appointment_specialties_default,
-        })
-        .select();
-
-      if (error) {
-        console.error('Error inserting into Supabase table:', error);
-        return;
+      if (result.success) {
+        router.push(`/dashboard/notes`);
       }
-
-      //   Call Replicate prediction with webhook
-      data && getReplicateMonoTranscript(temp_audio_url, data[0].id);
-
-      // Redirect to page for new note
-      data && router.push(`/dashboard/notes`);
     } catch (error) {
-      console.error('Failed to upload to Supabase table:', error);
-      // Display error message to user
-      revalidatePath(`/dashboard/notes`);
+      console.error('Failed to create note:', error);
+      throw error;
     }
   }
 
@@ -400,7 +307,6 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
   }
 
   function visualize() {
-    // Create AudioContext for visualizing audio stream
     const audioContext = new AudioContext();
     audioContextRef.current = audioContext;
     const analyser = audioContext.createAnalyser();
@@ -416,11 +322,9 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
       return;
     }
 
-    // Connect the microphone stream to the analyser node
     const microphone = audioContext.createMediaStreamSource(streamRef.current);
     microphone.connect(analyser);
 
-    // Connect to canvas for rendering bars
     const canvas = document.getElementById('visualizer') as HTMLCanvasElement;
     if (!canvas) {
       console.error('Canvas element not found');
@@ -434,50 +338,31 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
     const barSpace = 12;
 
     let barArrayLength = Math.floor(canvas.width / barSpace);
-
     let barArray: number[] = new Array(barArrayLength).fill(0);
 
     const getBar = () => {
       analyser.getByteFrequencyData(dataArray);
       const volume = (Math.max(...dataArray) / 255) * 0.83;
-
-      // console.log(volume);
-
       barArray.push(volume);
-
       if (barArray.length * barSpace > canvas.width) {
         barArray.shift();
       }
     };
 
-    // prettier-ignore
     function draw() {
       getBar();
-
       if (ctx == null) return;
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
       ctx.strokeStyle = '#f03';
       ctx.lineCap = 'round';
       ctx.lineWidth = dpr * 3;
 
-      
- 
       for (let i = 0; i < barArray.length; i++) {
         const barHeight = barArray[i] * canvas.height;
-
         ctx.beginPath();
-        ctx.moveTo(
-          i * barSpace,
-          canvas.height * 0.25,
-        );
-        ctx.lineTo(
-          i * barSpace,
-          canvas.height * 0.25 - barHeight * 0.5,
-        );
+        ctx.moveTo(i * barSpace, canvas.height * 0.25);
+        ctx.lineTo(i * barSpace, canvas.height * 0.25 - barHeight * 0.5);
         ctx.stroke();
-
         ctx.beginPath();
         ctx.moveTo(i * barSpace, canvas.height * 0.25);
         ctx.lineTo(i * barSpace, canvas.height * 0.25 + barHeight * 0.5);
@@ -493,7 +378,6 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
     animate();
 
     return () => {
-      // Cleanup resources when visualization stops
       if (drawVisualRef.current !== null) {
         cancelAnimationFrame(drawVisualRef.current);
       }
@@ -514,28 +398,24 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
 
-      const blob = new Blob(audioChunksRef.current, {
-        type: 'audio/wav',
-      });
+      const blob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
       setAudioBlob(blob);
       const url = URL.createObjectURL(blob);
       setAudioUrl(url);
       setTotalDuration(elapsedRecordingTime);
       setStatus('audioAvailable');
     }
-    // STOP VISUALIZATION.
+
     if (drawVisualRef.current) {
       cancelAnimationFrame(drawVisualRef.current);
       drawVisualRef.current = null;
     }
 
-    // Release microphone.
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
 
-    // Close the audio context
     if (audioContextRef.current) {
       audioContextRef.current.close();
       audioContextRef.current = null;
@@ -569,7 +449,6 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
     setPlayer(null);
     setIsAMR(false);
 
-    // clean up mediaRecorder
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.removeEventListener(
         'dataavailable',
@@ -632,7 +511,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
         onClick={triggerFileInputClick}
         tabIndex={0}
         className={clsx(
-          `grid h-48 w-full max-w-prose grid-rows-4 justify-items-center rounded-md border-2 border-dotted  bg-white p-4`,
+          `grid h-48 w-full max-w-prose grid-rows-4 justify-items-center rounded-md border-2 border-dotted bg-white p-4`,
           {
             'cursor-pointer': status === 'initial',
             'border-gray-300': !isDragging,
@@ -662,7 +541,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
             ''
           )}
         </div>
-        <div className="w-5/6 text-center text-sm  text-gray-500">
+        <div className="w-5/6 text-center text-sm text-gray-500">
           {status === 'initial' ? (
             'Tap icon below to record new audio.'
           ) : status === 'recording' ? (
@@ -676,11 +555,11 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
             <input
               type="range"
               min="0"
-              max={isAMR ? player?.duration : audioPlayerRef.current?.duration}
+              max={isAMR ? (player?.duration || 0) : (audioPlayerRef.current?.duration || 0)}
               value={
                 isAMR
-                  ? player?.currentTime
-                  : audioPlayerRef.current?.currentTime
+                  ? (player?.currentTime || 0)
+                  : (audioPlayerRef.current?.currentTime || 0)
               }
               onChange={handleRangeChange}
               className="w-full cursor-pointer accent-gray-600"
@@ -693,7 +572,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
         </div>
         <div>
           {status === 'initial' && (
-            <div className=" flex h-12 w-12 cursor-pointer items-center justify-center rounded-full  bg-teal-600 p-2 shadow transition-all hover:bg-teal-500 active:bg-teal-600">
+            <div className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-teal-600 p-2 shadow transition-all hover:bg-teal-500 active:bg-teal-600">
               <Microphone
                 size={32}
                 color="white"
@@ -704,7 +583,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
           )}
 
           {status === 'recording' && (
-            <div className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-red-600  p-2 shadow transition-all hover:bg-red-500 active:bg-red-600">
+            <div className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-red-600 p-2 shadow transition-all hover:bg-red-500 active:bg-red-600">
               <Stop
                 size={30}
                 color="white"
@@ -714,7 +593,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
             </div>
           )}
           {status === 'audioAvailable' && (
-            <div className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full  bg-teal-600 p-2 shadow transition-all hover:bg-teal-500">
+            <div className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-teal-600 p-2 shadow transition-all hover:bg-teal-500">
               <Play
                 size={32}
                 color="white"
@@ -725,7 +604,7 @@ const AudioUploadRecordVolumeVis: React.FC<AudioUploadRecordProps> = ({
           )}
 
           {status === 'playing' && (
-            <div className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full  bg-teal-600 p-2 shadow hover:bg-teal-500">
+            <div className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-teal-600 p-2 shadow hover:bg-teal-500">
               <Pause
                 size={32}
                 color="white"

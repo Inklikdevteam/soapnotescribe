@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/utils/supabase/client';
+import { createClient } from '@/utils/pocketbase/client';
 import Uppy, { PluginOptions, UploadResult, UppyFile } from '@uppy/core';
 import Tus from '@uppy/tus';
 // import Dashboard from '@uppy/react/lib/Dashboard';

@@ -3,7 +3,7 @@
 import Replicate from "replicate";
 import OpenAI from "openai"
 import Anthropic from '@anthropic-ai/sdk';
-import { createClient as createClientJS } from "@supabase/supabase-js";
+import PocketBase from 'pocketbase';
 import { SystemPromptVersion, systemPrompts } from "./systemPrompts";
 import { JSONSchemaVersion, JSONschemas } from "./jsonSchemas";
 import modelConfig from './modelConfig.json'
